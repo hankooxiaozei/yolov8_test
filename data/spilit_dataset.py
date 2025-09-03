@@ -15,8 +15,8 @@ def data_split(full_list, ratio):
     return sublist_1, sublist_2
 
 
-train_p="dataset/train"
-val_p="dataset/val"
+train_p="C:/Users/HL/Downloads/wendang_labels/train"
+val_p="C:/Users/HL/Downloads/wendang_labels/val"
 imgs_p="images"
 labels_p="labels"
 
@@ -43,8 +43,8 @@ if not os.path.exists(vp2):  # 指定要创建的目录
     os.mkdir(vp2)
 
 #数据集路径
-images_dir="D:/DL/ultralytics/dataset/images"
-labels_dir="D:/DL/ultralytics/dataset/labels"
+images_dir="C:/Users/HL/Downloads/wendang_labels/images20250826/"
+labels_dir="C:/Users/HL/Downloads/wendang_labels/label_test/"
 #划分数据集，设置数据集数量占比
 proportion_ = 0.9 #训练集占比
 
