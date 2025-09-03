@@ -58,6 +58,7 @@ if __name__ == "__main__":
     classes = args.classes
 
     # json_dir = "C:/Users/HL/Downloads/wendang_labels/images20250826/"
+    # json_dir = "C:/Users/HL/Downloads/wendang_labels/images_test/"
     # save_dir = "C:/Users/HL/Downloads/wendang_labels/label_test/"
     # classes = "_ignore_,E,M"
     convert_label_json(json_dir, save_dir, classes)

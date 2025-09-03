@@ -47,7 +47,8 @@ def spilit_dataset(train_p,val_p,imgs_p,labels_p,images_dir,labels_dir,proportio
 
     #划分数据集，设置数据集数量占比
 
-    total_file = os.listdir(images_dir)
+    # total_file = os.listdir(images_dir)
+    total_file =  [f for f in os.listdir(images_dir) if f.lower().endswith('.json')]
 
     num = len(total_file)  # 统计所有的标注文件
     list_=[]
@@ -59,7 +60,7 @@ def spilit_dataset(train_p,val_p,imgs_p,labels_p,images_dir,labels_dir,proportio
     for i in range(0,num):
         file=total_file[i]
         print(i,' - ',total_file[i])
-        name=file.split('.')[0]
+        name=file.split('.json')[0]
         if i in list1:
             jpg_1 = os.path.join(images_dir, file)
             jpg_2 = os.path.join(train_p, imgs_p, file)
@@ -101,6 +102,8 @@ if __name__ == "__main__":
     labels_p = args.labels_p
     images_dir = args.images_dir
     labels_dir = args.labels_dir
+    # images_dir = "C:/Users/HL/Downloads/wendang_labels/images_test/"
+    # labels_dir = "C:/Users/HL/Downloads/wendang_labels/label_test/"
     proportion_ = args.proportion
 
     spilit_dataset(train_p, val_p, imgs_p, labels_p, images_dir, labels_dir, proportion_)
