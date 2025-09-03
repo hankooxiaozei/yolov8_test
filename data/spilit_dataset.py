@@ -62,8 +62,8 @@ def spilit_dataset(train_p,val_p,imgs_p,labels_p,images_dir,labels_dir,proportio
         print(i,' - ',total_file[i])
         name=file.split('.json')[0]
         if i in list1:
-            jpg_1 = os.path.join(images_dir, file)
-            jpg_2 = os.path.join(train_p, imgs_p, file)
+            jpg_1 = os.path.join(images_dir, name + '.jpg')
+            jpg_2 = os.path.join(train_p, imgs_p, name + '.jpg')
             txt_1 = os.path.join(labels_dir, name + '.txt')
             txt_2 = os.path.join(train_p, labels_p, name + '.txt')
             if os.path.exists(txt_1) and os.path.exists(jpg_1):
@@ -75,8 +75,8 @@ def spilit_dataset(train_p,val_p,imgs_p,labels_p,images_dir,labels_dir,proportio
                 print(jpg_1)
 
         elif i in list2:
-            jpg_1 = os.path.join(images_dir, file)
-            jpg_2 = os.path.join(val_p, imgs_p, file)
+            jpg_1 = os.path.join(images_dir, name + '.jpg')
+            jpg_2 = os.path.join(val_p, imgs_p, name + '.jpg')
             txt_1 = os.path.join(labels_dir, name + '.txt')
             txt_2 = os.path.join(val_p, labels_p, name + '.txt')
             shutil.copyfile(jpg_1, jpg_2)
