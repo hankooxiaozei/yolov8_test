@@ -48,16 +48,16 @@ def convert_label_json(json_dir, save_dir, classes):
 
 
 if __name__ == "__main__":
-    # parser = argparse.ArgumentParser(description='json convert to txt params')
-    # parser.add_argument('--json-dir', type=str, default='dataset/json_labels', help='json path dir')
-    # parser.add_argument('--save-dir', type=str, default='dataset/labels', help='txt save dir')
-    # parser.add_argument('--classes', type=str, default='surface', help='classes')
-    # args = parser.parse_args()
-    # json_dir = args.json_dir
-    # save_dir = args.save_dir
-    # classes = args.classes
+    parser = argparse.ArgumentParser(description='json convert to txt params')
+    parser.add_argument('--json-dir', type=str, default='dataset/json_labels', help='json path dir')
+    parser.add_argument('--save-dir', type=str, default='dataset/labels', help='txt save dir')
+    parser.add_argument('--classes', type=str, default='surface', help='classes')
+    args = parser.parse_args()
+    json_dir = args.json_dir
+    save_dir = args.save_dir
+    classes = args.classes
 
-    json_dir = "C:/Users/HL/Downloads/wendang_labels/images20250826/"
-    save_dir = "C:/Users/HL/Downloads/wendang_labels/label_test/"
-    classes = "_ignore_,E,M"
+    # json_dir = "C:/Users/HL/Downloads/wendang_labels/images20250826/"
+    # save_dir = "C:/Users/HL/Downloads/wendang_labels/label_test/"
+    # classes = "_ignore_,E,M"
     convert_label_json(json_dir, save_dir, classes)
