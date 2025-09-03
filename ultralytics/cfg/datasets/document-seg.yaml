@@ -20,6 +20,5 @@ names:
   1: E
   2: M
 
-
 # Download script/URL (optional)
 download: https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128-seg.zip
