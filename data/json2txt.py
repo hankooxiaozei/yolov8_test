@@ -7,7 +7,7 @@ import glob
 import cv2
 import numpy as np
 
-
+keep_shape_labels = ["","E"]
 def convert_label_json(json_dir, save_dir, classes):
     
     classes = classes.split(',')
@@ -29,6 +29,8 @@ def convert_label_json(json_dir, save_dir, classes):
 
         for shape_dict in json_dict['shapes']:
             label = shape_dict['label']
+            if label not in keep_shape_labels:
+                continue
             label_index = classes.index(label)
             points = shape_dict['points']
 
@@ -57,8 +59,8 @@ if __name__ == "__main__":
     save_dir = args.save_dir
     classes = args.classes
 
-    # json_dir = "C:/Users/HL/Downloads/wendang_labels/images20250826/"
     # json_dir = "C:/Users/HL/Downloads/wendang_labels/images_test/"
+    # json_dir = "C:/Users/HL/Downloads/wendang_labels/images20250826/"
     # save_dir = "C:/Users/HL/Downloads/wendang_labels/label_test/"
     # classes = "_ignore_,E,M"
     convert_label_json(json_dir, save_dir, classes)
