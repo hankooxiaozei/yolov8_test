@@ -137,6 +137,9 @@ if __name__ == "__main__":
     # save_dir = args.save_dir
     # img_dir = args.img_dir
 
-    save_dir = "C:/Users/HL/Downloads/wendang_labels_1/labels_test"
+    # save_dir = "C:/Users/HL/Downloads/wendang_labels/label_test"
+    # img_dir = "C:/Users/HL/Downloads/wendang_labels/images_test/"
+
+    save_dir = "C:/Users/HL/Downloads/wendang_labels_1/label_test"
     img_dir = "C:/Users/HL/Downloads/wendang_labels_1/images/"
     check_labels(save_dir, img_dir)
