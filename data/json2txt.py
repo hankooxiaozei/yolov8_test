@@ -26,31 +26,47 @@ def convert_label_json(json_dir, save_dir, classes):
             json_dict = json.load(load_f, )
         h, w = json_dict['imageHeight'], json_dict['imageWidth']
 
-        # save txt path
-        txt_path = os.path.join(save_dir, json_path.replace('json', 'txt'))
-        txt_file = open(txt_path, 'w')
-
+        has_valid_shape = False
         for shape_dict in json_dict['shapes']:
             label = shape_dict['label']
             if label not in keep_shape_labels:
                 continue
-            shape_type= shape_dict['shape_type']
+            shape_type = shape_dict['shape_type']
             if shape_type != 'polygon':
                 continue
-            label_index = classes.index(label)
-            points = shape_dict['points']
+            has_valid_shape = True
+            break
 
-            points_nor_list = []
+        if has_valid_shape:
+            # save txt path
+            txt_path = os.path.join(save_dir, json_path.replace('json', 'txt'))
+            txt_file = open(txt_path, 'w')
 
-            for point in points:
-                points_nor_list.append(point[0] / w)
-                points_nor_list.append(point[1] / h)
+            for shape_dict in json_dict['shapes']:
+                label = shape_dict['label']
+                if label not in keep_shape_labels:
+                    continue
+                shape_type= shape_dict['shape_type']
+                if shape_type != 'polygon':
+                    continue
 
-            points_nor_list = list(map(lambda x: str(x), points_nor_list))
-            points_nor_str = ' '.join(points_nor_list)
+                label_index = classes.index(label)
+                points = shape_dict['points']
 
-            label_str = str(label_index) + ' ' + points_nor_str + '\n'
-            txt_file.writelines(label_str)
+                points_nor_list = []
+
+                for point in points:
+                    points_nor_list.append(point[0] / w)
+                    points_nor_list.append(point[1] / h)
+
+                points_nor_list = list(map(lambda x: str(x), points_nor_list))
+                points_nor_str = ' '.join(points_nor_list)
+
+                label_str = str(label_index) + ' ' + points_nor_str + '\n'
+                txt_file.writelines(label_str)
+            txt_file.close()
+        else:
+            print(f"No valid shape found in {json_path}, skipping.")
 
 
 if __name__ == "__main__":
