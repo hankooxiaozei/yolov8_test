@@ -12,7 +12,7 @@ keep_shape_labels = ["E"]
 
 def convert_label_json(json_dir, save_dir, classes):
     classes = classes.split(',')
-    print("classes:" + classes)
+    # print("classes:" + classes)
     print("classes.num:" + len(classes))
     # 获取指定目录下所有 .json 文件的列表
     json_paths = [f for f in os.listdir(json_dir) if f.lower().endswith('.json')]
