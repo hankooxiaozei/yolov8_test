@@ -7,7 +7,7 @@ import glob
 import cv2
 import numpy as np
 
-keep_shape_labels = ["","E"]
+keep_shape_labels = ["E"]
 def convert_label_json(json_dir, save_dir, classes):
     
     classes = classes.split(',')
@@ -62,5 +62,5 @@ if __name__ == "__main__":
     # json_dir = "C:/Users/HL/Downloads/wendang_labels/images_test/"
     # json_dir = "C:/Users/HL/Downloads/wendang_labels/images20250826/"
     # save_dir = "C:/Users/HL/Downloads/wendang_labels/label_test/"
-    # classes = "_ignore_,E,M"
+    # classes = "E"
     convert_label_json(json_dir, save_dir, classes)
