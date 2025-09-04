@@ -8,10 +8,13 @@ import cv2
 import numpy as np
 
 keep_shape_labels = ["E"]
+
+
 def convert_label_json(json_dir, save_dir, classes):
-    
     classes = classes.split(',')
-     # 获取指定目录下所有 .json 文件的列表
+    print("classes:" + classes)
+    print("classes.num:" + len(classes))
+    # 获取指定目录下所有 .json 文件的列表
     json_paths = [f for f in os.listdir(json_dir) if f.lower().endswith('.json')]
 
     for json_path in tqdm(json_paths):
@@ -45,8 +48,6 @@ def convert_label_json(json_dir, save_dir, classes):
 
             label_str = str(label_index) + ' ' + points_nor_str + '\n'
             txt_file.writelines(label_str)
-
-
 
 
 if __name__ == "__main__":
