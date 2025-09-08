@@ -1,12 +1,8 @@
-# -*- coding: utf-8 -*-
-import json
-import os
-import argparse
-from tqdm import tqdm
 import glob
+import os
+
 import cv2
 import numpy as np
-
 
 
 def check_labels(txt_labels, images_dir):
@@ -33,11 +29,11 @@ def check_labels(txt_labels, images_dir):
             print(new_info)
             s = []
             for i in range(1, len(new_info), 2):
-                b = [float(tmp) for tmp in new_info[i:i + 2]]
+                b = [float(tmp) for tmp in new_info[i : i + 2]]
                 s.append([int(b[0] * width), int(b[1] * height)])
             cv2.polylines(img, [np.array(s, np.int32)], True, color_map.get(new_info[0]))
-        cv2.namedWindow('img2', 0)
-        cv2.imshow('img2', img)
+        cv2.namedWindow("img2", 0)
+        cv2.imshow("img2", img)
         cv2.waitKey()
 
 
@@ -46,11 +42,9 @@ def check_labels(txt_labels, images_dir):
 # =============================================================================
 def denoise_with_bilateral_filter(image):
     """
-    使用双边滤波对图像进行去噪处理。
-    参数:
-    image (numpy.ndarray): 输入的含噪图像 (BGR格式)。
-    返回:
-    numpy.ndarray: 去噪后的图像。
+    使用双边滤波对图像进行去噪处理。 参数:
+
+    image (numpy.ndarray): 输入的含噪图像 (BGR格式)。 返回: numpy.ndarray: 去噪后的图像。.
     """
     print("步骤 1: 正在使用双边滤波进行去噪...")
 
@@ -77,11 +71,9 @@ def denoise_with_bilateral_filter(image):
 # =============================================================================
 def enhance_with_histogram_equalization(image):
     """
-    通过对RGB三通道分别进行直方图均衡化来增强图像对比度。
-    参数:
-    image (numpy.ndarray): 输入图像 (BGR格式)。
-    返回:
-    numpy.ndarray: 增强后的图像。
+    通过对RGB三通道分别进行直方图均衡化来增强图像对比度。 参数:
+
+    image (numpy.ndarray): 输入图像 (BGR格式)。 返回: numpy.ndarray: 增强后的图像。.
     """
     print("步骤 2: 正在使用分通道直方图均衡化进行增强...")
     # 1. 将BGR图像分解为B, G, R三个独立的通道
@@ -96,13 +88,12 @@ def enhance_with_histogram_equalization(image):
     enhanced_image = cv2.merge([b_eq, g_eq, r_eq])
     return enhanced_image
 
+
 def enhance_contrast_clahe(image, clipLimit=4.0, tileGridSize=(8, 8)):
     """
-    使用CLAHE在LAB颜色空间上增强图像对比度。
-    参数:
-    image (numpy.ndarray): 输入的BGR格式图像。
-    返回:
-    numpy.ndarray: 对比度增强后的BGR格式图像。
+    使用CLAHE在LAB颜色空间上增强图像对比度。 参数:
+
+    image (numpy.ndarray): 输入的BGR格式图像。 返回: numpy.ndarray: 对比度增强后的BGR格式图像。.
     """
     # 1. 将图像从BGR颜色空间转换到LAB颜色空间
     # LAB空间将亮度和颜色信息分开
@@ -122,12 +113,12 @@ def enhance_contrast_clahe(image, clipLimit=4.0, tileGridSize=(8, 8)):
     enhanced_image = cv2.cvtColor(merged_lab_image, cv2.COLOR_LAB2BGR)
     return enhanced_image
 
+
 # 锐化函数
 def sharpen_image(image):
-    kernel = np.array([[-1, -1, -1],
-                       [-1,  9, -1],
-                       [-1, -1, -1]])
+    kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
     return cv2.filter2D(image, -1, kernel)
+
 
 if __name__ == "__main__":
     # parser = argparse.ArgumentParser(description='json convert to txt params')
