@@ -113,8 +113,8 @@ class Detect(nn.Module):
 
     def forward(self, x: List[torch.Tensor]) -> Union[List[torch.Tensor], Tuple]:
         """Concatenate and return predicted bounding boxes and class probabilities."""
-        if self.end2end:
-            return self.forward_end2end(x)
+        # if self.end2end:
+        #     return self.forward_end2end(x)
 
         shape = x[0].shape
         for i in range(self.nl):
@@ -124,13 +124,7 @@ class Detect(nn.Module):
         elif self.dynamic or self.shape != shape:
             self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
             self.shape = shape
-        '''原代码
-        y = self._inference(x)
-        return y if self.export else (y, x)
-        '''
-        # 以下2行代码用于安卓部署
-
-        return torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2).permute(0, 2, 1)
+        return torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
 
     def forward_end2end(self, x: List[torch.Tensor]) -> Union[dict, Tuple]:
         """
@@ -206,10 +200,10 @@ class Detect(nn.Module):
         for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
             a[-1].bias.data[:] = 1.0  # box
             b[-1].bias.data[: m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
-        if self.end2end:
-            for a, b, s in zip(m.one2one_cv2, m.one2one_cv3, m.stride):  # from
-                a[-1].bias.data[:] = 1.0  # box
-                b[-1].bias.data[: m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
+        # if self.end2end:
+        #     for a, b, s in zip(m.one2one_cv2, m.one2one_cv3, m.stride):  # from
+        #         a[-1].bias.data[:] = 1.0  # box
+        #         b[-1].bias.data[: m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
 
     def decode_bboxes(self, bboxes: torch.Tensor, anchors: torch.Tensor, xywh: bool = True) -> torch.Tensor:
         """Decode bounding boxes from predictions."""
