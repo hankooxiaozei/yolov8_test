@@ -10,4 +10,7 @@ data/json2txt --json-dir C:\Users\HL\Downloads\文档边缘标注\images-2025082
 --classes _ignore_,E,M
 
 
+onnx2ncnn C:\Users\HL\Visual_Studio_Code\LineDetector_V2\models\best_2.onnx Yolov8.param Yolov8.bin
+
+
 
