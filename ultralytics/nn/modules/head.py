@@ -120,8 +120,13 @@ class Detect(nn.Module):
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
         if self.training:  # Training path
             return x
+        '''原代码
         y = self._inference(x)
         return y if self.export else (y, x)
+        '''
+        # 以下2行代码用于安卓部署
+        shape = x[0].shape
+        return torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2).permute(0, 2, 1)
 
     def forward_end2end(self, x: List[torch.Tensor]) -> Union[dict, Tuple]:
         """
@@ -160,6 +165,8 @@ class Detect(nn.Module):
         # Inference path
         shape = x[0].shape  # BCHW
         x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
+
+        '''原代码
         if self.format != "imx" and (self.dynamic or self.shape != shape):
             self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
             self.shape = shape
@@ -183,6 +190,9 @@ class Detect(nn.Module):
         if self.export and self.format == "imx":
             return dbox.transpose(1, 2), cls.sigmoid().permute(0, 2, 1)
         return torch.cat((dbox, cls.sigmoid()), 1)
+        '''
+        # 以下1行代码用于安卓部署
+        return x_cat.permute(0, 2, 1)
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
