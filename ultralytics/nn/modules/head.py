@@ -113,9 +113,6 @@ class Detect(nn.Module):
 
     def forward(self, x: List[torch.Tensor]) -> Union[List[torch.Tensor], Tuple]:
         """Concatenate and return predicted bounding boxes and class probabilities."""
-        # if self.end2end:
-        #     return self.forward_end2end(x)
-
         shape = x[0].shape
         for i in range(self.nl):
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
@@ -125,6 +122,7 @@ class Detect(nn.Module):
             self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
             self.shape = shape
         return torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
+
 
     def forward_end2end(self, x: List[torch.Tensor]) -> Union[dict, Tuple]:
         """
@@ -163,8 +161,6 @@ class Detect(nn.Module):
         # Inference path
         shape = x[0].shape  # BCHW
         x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
-
-        '''原代码
         if self.format != "imx" and (self.dynamic or self.shape != shape):
             self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
             self.shape = shape
@@ -188,9 +184,6 @@ class Detect(nn.Module):
         if self.export and self.format == "imx":
             return dbox.transpose(1, 2), cls.sigmoid().permute(0, 2, 1)
         return torch.cat((dbox, cls.sigmoid()), 1)
-        '''
-        # 以下1行代码用于安卓部署
-        return x_cat.permute(0, 2, 1)
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
@@ -200,10 +193,10 @@ class Detect(nn.Module):
         for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
             a[-1].bias.data[:] = 1.0  # box
             b[-1].bias.data[: m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
-        # if self.end2end:
-        #     for a, b, s in zip(m.one2one_cv2, m.one2one_cv3, m.stride):  # from
-        #         a[-1].bias.data[:] = 1.0  # box
-        #         b[-1].bias.data[: m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
+        if self.end2end:
+            for a, b, s in zip(m.one2one_cv2, m.one2one_cv3, m.stride):  # from
+                a[-1].bias.data[:] = 1.0  # box
+                b[-1].bias.data[: m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
 
     def decode_bboxes(self, bboxes: torch.Tensor, anchors: torch.Tensor, xywh: bool = True) -> torch.Tensor:
         """Decode bounding boxes from predictions."""
@@ -283,8 +276,7 @@ class Segment(Detect):
         x = Detect.forward(self, x)
         if self.training:
             return x, mc, p
-        # return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
-        return (torch.cat([x, mc], 1).permute(0, 2, 1), p.view(bs, self.nm, -1)) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
+        return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
 
 
 class OBB(Detect):
