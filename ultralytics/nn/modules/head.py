@@ -121,7 +121,7 @@ class Detect(nn.Module):
         elif self.dynamic or self.shape != shape:
             self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
             self.shape = shape
-        return torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2).permute(0, 2, 1)
+        return torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
 
 
     def forward_end2end(self, x: List[torch.Tensor]) -> Union[dict, Tuple]:
@@ -276,8 +276,9 @@ class Segment(Detect):
         x = Detect.forward(self, x)
         if self.training:
             return x, mc, p
-        return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
-
+        # return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
+        return (torch.cat([x, mc], 1).permute(0, 2, 1), p.view(bs, self.nm, -1)) if self.export else (
+            torch.cat([x[0], mc], 1), (x[1], mc, p))
 
 class OBB(Detect):
     """
