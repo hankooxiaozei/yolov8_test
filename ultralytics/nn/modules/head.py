@@ -277,7 +277,7 @@ class Segment(Detect):
         if self.training:
             return x, mc, p
         # return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
-        return (torch.cat([x, mc], 1).permute(0, 2, 1), (x[1], mc, p)) if self.export else (
+        return (torch.cat([x, mc], 1).permute(0, 2, 1), p.view(bs, self.nm, -1)) if self.export else (
             torch.cat([x[0], mc], 1), (x[1], mc, p))
 
 class OBB(Detect):
