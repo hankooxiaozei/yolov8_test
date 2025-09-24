@@ -77,6 +77,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     json_dir = args.json_dir
     save_dir = args.save_dir
+    #M、E
     classes = args.classes
 
     # json_dir = "C:/Users/HL/Downloads/wendang_labels_1/images/"
