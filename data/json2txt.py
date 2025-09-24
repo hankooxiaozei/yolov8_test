@@ -7,7 +7,7 @@ import glob
 import cv2
 import numpy as np
 
-keep_shape_labels = ["E"]
+# keep_shape_labels = ["E"]
 
 
 def convert_label_json(json_dir, save_dir, classes):
@@ -29,7 +29,7 @@ def convert_label_json(json_dir, save_dir, classes):
         has_valid_shape = False
         for shape_dict in json_dict['shapes']:
             label = shape_dict['label']
-            if label not in keep_shape_labels:
+            if label not in classes:
                 continue
             shape_type = shape_dict['shape_type']
             if shape_type != 'polygon':
@@ -44,7 +44,7 @@ def convert_label_json(json_dir, save_dir, classes):
 
             for shape_dict in json_dict['shapes']:
                 label = shape_dict['label']
-                if label not in keep_shape_labels:
+                if label not in classes:
                     continue
                 shape_type= shape_dict['shape_type']
                 if shape_type != 'polygon':
