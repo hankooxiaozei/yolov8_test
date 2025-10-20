@@ -275,6 +275,14 @@ class Segment(Detect):
         x = Detect.forward(self, x)
         if self.training:
             return x, mc, p
+        # 导出模式，将检测结果和掩码系数打包到一个大张量里
+        # x：[batch_size, num_predictions, 4 + num_classes]
+        # torch.cat([x, mc], 1)：[batch_size, num_predictions, 4 + num_classes + 32]
+
+        # 纯推理/验证模式
+        # x[0]:检测输出，形状为 [batch_size, num_predictions, 4 + num_classes]
+        # torch.cat([x[0], mc], 1):将检测输出x[0]和掩码系数mc打包，[batch_size, num_predictions, 4 + num_classes + 32]
+        # (x[1], mc, p)：将其他信息（如训练时用的原始特征图）、掩码系数、原型掩码打包成一个元组
         return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
 
 
@@ -374,14 +382,25 @@ class Pose(Detect):
 
     def forward(self, x: List[torch.Tensor]) -> Union[torch.Tensor, Tuple]:
         """Perform forward pass through YOLO model and return predictions."""
+        # x[0] 是第一个尺度的特征图张量。
         bs = x[0].shape[0]  # batch size
+        # self.cv4[i]：init中定义的nn.Sequential(...)，其输出形状(bs, self.nk, H, W)
+        # .view(bs, self.nk, -1)：(bs, self.nk, H, W)->(bs, self.nk, H*W)
+        # [...]: 列表推导式, [(bs, self.nk, 6400), (bs, self.nk, 1600), (bs, self.nk, 400)]
+        # torch.cat(..., -1): (bs, self.nk, 8400)
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)  # (bs, 17*3, h*w)
+        # x:(bs, 84, 8400)
         x = Detect.forward(self, x)
         if self.training:
             return x, kpt
+        # 解码成实际的关键点坐标
         pred_kpt = self.kpts_decode(bs, kpt)
         if self.export and self.format == "imx":
             return (*x, pred_kpt.permute(0, 2, 1))
+        # torch.cat([x, pred_kpt], 1):(bs, 84, 8400)+(bs, 51, 8400)=(bs, 84 + 51, 8400)
+        # (torch.cat([x[0], pred_kpt], 1), (x[1], kpt)):
+        # torch.cat([x[0], pred_kpt], 1):x[0](bs, 84, 8400)+pred_kpt(bs, 51, 8400)=> (bs, 135, 8400)
+        # (x[1], kpt): 未经解码的原始网络输出（logits）
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
 
     def kpts_decode(self, bs: int, kpts: torch.Tensor) -> torch.Tensor:
@@ -413,6 +432,121 @@ class Pose(Detect):
             y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
             return y
 
+
+class SegmentPose(Segment):
+    """
+    YOLOv8 SegmentPose head for combined detection, segmentation, and pose estimation.
+    This class is an advanced version that aligns with the official implementation patterns
+    of both `Segment` and `Pose` heads.
+    It inherits from `Segment` to reuse detection and segmentation logic, and integrates
+    a keypoint prediction branch (`cv4`) architecturally similar to the `Pose` head.
+    """
+
+    def __init__(self, nc=80, kpt_shape=(17, 3), nm=32, npr=256, ch=()):
+        """
+        Initialize the YOLOv8 SegmentPose head.
+        Args:
+            nc (int): Number of classes.
+            kpt_shape (tuple): Shape of keypoints data (number of keypoints, number of dimensions).
+            nm (int): Number of mask prototypes.
+            npr (int): Number of channels for prototype generation network.
+            ch (tuple): A tuple of input channels for each feature map level.
+        """
+        # 1. Initialize the parent Segment class. This sets up detection (box, cls)
+        #    and segmentation (proto, mask_coef) heads.
+        super().__init__(nc=nc, nm=nm, npr=npr, ch=ch)
+        # 2. Define the keypoint prediction head, mirroring the official `Pose` head implementation.
+        self.kpt_shape = kpt_shape
+        self.nk = kpt_shape[0] * kpt_shape[1]  # Total number of keypoint values (e.g., 17 * 3 = 51)
+        # Calculate intermediate channels for the keypoint head, same logic as `Pose` class.
+        # Create keypoint prediction layers (`cv4`), following the `Pose` head's naming convention.
+        c4 = max(ch[0] // 4, self.nk)
+        self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nk, 1)) for x in ch)
+
+    def forward(self, x):
+        """
+        Forward pass of the SegmentPose head.
+        During training, it returns a tuple of tensors needed for the loss calculation.
+        The output format is designed to be easily consumed by a custom loss function.
+        Args:
+            x (list of torch.Tensor): A list of feature maps from the FPN/PAN neck.
+        Returns:
+            A tuple of tensors: (det_preds, proto, mask_coefs, kpt_preds)
+            - det_preds (list): Raw detection predictions from each level.
+            - proto (torch.Tensor): Segmentation prototype masks.
+            - mask_coefs (list): Raw mask coefficient predictions from each level.
+            - kpt_preds (torch.Tensor): A single concatenated and reshaped tensor of
+                                        keypoint predictions of shape (bs, nk, total_anchors).
+        """
+        bs = x[0].shape[0]  # batch size
+        # 1. Get detection and segmentation outputs from the parent `Segment` class.
+        #    If training, `super().forward(x)` returns a tuple (det_preds, mask_coefs, proto).
+        seg_output = super().forward(x)
+        # 2. Compute and process keypoint predictions, mirroring the `Pose` class logic.
+        #    This creates a single, flattened tensor for all keypoints across all levels.
+        kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)
+        # 3. Return all components. Note: We only implement the training path for now,
+        #    as inference/export logic requires more complex post-processing.
+        if self.training:
+            #  (det_preds, mask_coefs, proto)
+            return seg_output[0], seg_output[1], seg_output[2], kpt
+        else:
+            # For inference, the output structure would need to be carefully designed
+            # to be compatible with NMS and post-processing. For now, we return the
+            # same as training, as our primary goal is to enable training.
+            # A more complete implementation would decode and merge these outputs.
+            # fixme hank export
+            pred_kpt = self.kpts_decode(bs, kpt)
+            # return det_preds, proto, mask_coefs, kpt
+            if self.export:
+                # `seg_output` is (cat_det_and_mask_coef, proto)
+                # `seg_output[0]` has shape (bs, 4 + nc + nm, total_anchors)
+                export_tensor = torch.cat([seg_output[0], pred_kpt], 1)
+                # Final output is (main_tensor, proto)
+                return export_tensor, seg_output[1]
+            else:
+                # 推理或验证时
+                # seg_output[0]：[batch_size, 4 + num_classes + 32, num_predictions]
+                # seg_output[1]：(x[1], mc, p)：其他信息（如训练时用的原始特征图）、掩码系数、原型掩码
+                cat_det_and_mask_coef, (raw_det_preds, raw_mask_coefs, proto) = seg_output
+                # `cat_det_and_mask_coef` has shape (bs, 4 + nc + nm, total_anchors)
+                # Append keypoints to create the main tensor for NMS.
+                main_pred = torch.cat([cat_det_and_mask_coef, pred_kpt], 1)
+
+                # Part 1: Data for NMS ([box, cls, mask_coef, kpt] and proto)
+                inference_output_part1 = (main_pred, proto)
+                # Part 2: Raw model outputs
+                inference_output_part2 = (raw_det_preds, raw_mask_coefs, kpt)
+                return inference_output_part1, inference_output_part2
+
+    def kpts_decode(self, bs: int, kpts: torch.Tensor) -> torch.Tensor:
+        """Decode keypoints from predictions."""
+        ndim = self.kpt_shape[1]
+        if self.export:
+            if self.format in {
+                "tflite",
+                "edgetpu",
+            }:  # required for TFLite export to avoid 'PLACEHOLDER_FOR_GREATER_OP_CODES' bug
+                # Precompute normalization factor to increase numerical stability
+                y = kpts.view(bs, *self.kpt_shape, -1)
+                grid_h, grid_w = self.shape[2], self.shape[3]
+                grid_size = torch.tensor([grid_w, grid_h], device=y.device).reshape(1, 2, 1)
+                norm = self.strides / (self.stride[0] * grid_size)
+                a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * norm
+            else:
+                # NCNN fix
+                y = kpts.view(bs, *self.kpt_shape, -1)
+                a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * self.strides
+            if ndim == 3:
+                a = torch.cat((a, y[:, :, 2:3].sigmoid()), 2)
+            return a.view(bs, self.nk, -1)
+        else:
+            y = kpts.clone()
+            if ndim == 3:
+                y[:, 2::ndim] = y[:, 2::ndim].sigmoid()  # sigmoid (WARNING: inplace .sigmoid_() Apple MPS bug)
+            y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
+            y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
+            return y
 
 class Classify(nn.Module):
     """

@@ -223,12 +223,14 @@ class v8DetectionLoss:
             i = targets[:, 0]  # image index
             _, counts = i.unique(return_counts=True)
             counts = counts.to(dtype=torch.int32)
+            # [batch_size, max_num_gt, 5]
             out = torch.zeros(batch_size, counts.max(), ne - 1, device=self.device)
             for j in range(batch_size):
+                # 创建布尔掩码 [True, True, True, False, False]
                 matches = i == j
                 if n := matches.sum():
-                    out[j, :n] = targets[matches, 1:]
-            out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
+                    out[j, :n] = targets[matches, 1:] # 使用掩码从targets中选出属于图像0的所有行，并且切掉第一列
+            out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor)) # 将转换后的 xyxy 坐标写回out张量的相应位置
         return out
 
     def bbox_decode(self, anchor_points: torch.Tensor, pred_dist: torch.Tensor) -> torch.Tensor:
@@ -497,56 +499,133 @@ class v8PoseLoss(v8DetectionLoss):
         """Calculate the total loss and detach it for pose estimation."""
         loss = torch.zeros(5, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
+
+        """
+        # feats: [B, C, H, W]
+        # self.no: self.nc (类别数) + self.reg_max * 4 (边界框回归的通道数)，C == self.no == self.nc (类别数) + self.reg_max * 4
+        #.view(): [B, C, H, W] -> [B, C, H*W]
+        # .cat(..., 2): [B, C, H*W]->[B, C, Total_Anchors]，Total_Anchors = A1 + A2 + A3
+        # .split((self.reg_max * 4, self.nc), 1) : [B, C, Total_Anchors]->[B, self.reg_max * 4, Total_Anchors]+[B, self.nc, Total_Anchors]
+        """
+        # pred_distri: [B, self.reg_max * 4, Total_Anchors]，用于边界框回归的原始分布预测值。
+        # pred_scores: [B, self.nc, Total_Anchors]，用于类别分类的原始分数预测值。
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1
         )
 
         # B, grids, ..
+        # [B, X, Total_Anchors] -》[B, Total_Anchors, X]
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
         pred_kpts = pred_kpts.permute(0, 2, 1).contiguous()
 
         dtype = pred_scores.dtype
+        # feats: [B, C, H, W]
+        # feats[0].shape[2:] 获取第一个特征图的 (H, W)
+        # self.stride[0]: 第一个特征图的采样步长
+        # imgsz:[image_height, image_width]
         imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
+        # 为所有特征图上的所有位置生成基准点及其对应的步长信息。
+        # [Total_Anchors, 2]：[Total_Anchors, 2]，包含了所有特征图上所有锚点的 (x, y) 坐标
+        # [Total_Anchors, 2]：[Total_Anchors, 1]，记录了每个锚点对应的步长
         anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
 
         # Targets
         batch_size = pred_scores.shape[0]
+        # 提取批次中所有真实框的图像索引，并将这个一维张量 [N] 变形成一个二维的列向量 [N, 1]
+        # batch["cls"].view(-1, 1): [N, 1]，所有真实框的类别ID
+        # batch["bboxes"]: [N, 4]
+        # targets：[N, 6]，[image_index, class_id, cx, cy, w, h]
         batch_idx = batch["batch_idx"].view(-1, 1)
         targets = torch.cat((batch_idx, batch["cls"].view(-1, 1), batch["bboxes"]), 1)
+        """
+        preprocess输出:
+        [[[clsA, x_a_lt, y_a_lt, x_a_rb, y_a_rb],      # 图像 0, 物体 1
+          [clsB, x_b_lt, y_b_lt, x_b_rb, y_b_rb],      # 图像 0, 物体 2
+          [clsC, x_c_lt, y_c_lt, x_c_rb, y_c_rb]],     # 图像 0, 物体 3
+         
+         [[clsD, x_d_lt, y_d_lt, x_d_rb, y_d_rb],      # 图像 1, 物体 1
+          [clsE, x_e_lt, y_e_lt, x_e_rb, y_e_rb],      # 图像 1, 物体 2
+          [0,    0,      0,      0,      0     ]]]     # 图像 1, 填充行 (Padding)
+        """
         targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
+        # gt_labels: 形状 [B, max_num_gt, 1]，包含了每个真实框的类别ID。
+        # gt_bboxes: 形状 [B, max_num_gt, 4]，包含了每个真实框的 xyxy 绝对像素坐标。
+        """
+        gt_labels:
+        [[[clsA],      # 图像 0, 物体 1
+          [clsB],      # 图像 0, 物体 2
+          [clsC]],     # 图像 0, 物体 3
+         
+         [[clsD],      # 图像 1, 物体 1
+          [clsE],      # 图像 1, 物体 2
+          [0   ]]]     # 图像 1, 填充行 (Padding)
+          
+        gt_bboxes: 
+        [[[x_a_lt, y_a_lt, x_a_rb, y_a_rb],      # 图像 0, 物体 1
+          [x_b_lt, y_b_lt, x_b_rb, y_b_rb],      # 图像 0, 物体 2
+          [x_c_lt, y_c_lt, x_c_rb, y_c_rb]],     # 图像 0, 物体 3
+         
+         [[x_d_lt, y_d_lt, x_d_rb, y_d_rb],      # 图像 1, 物体 1
+          [x_e_lt, y_e_lt, x_e_rb, y_e_rb],      # 图像 1, 物体 2
+          [0,      0,      0,      0     ]]]     # 图像 1, 填充行 (Padding)
+        """
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
+        # 创建一个布尔掩码
+        """
+        mask_gt: 
+        [[[True],      # 图像 0, 有物体
+          [True],      # 图像 0, 有物体
+          [True]],     # 图像 0, 有物体
+         
+         [[True],      # 图像 1, 有物体
+          [True],      # 图像 1, 有物体
+          [False]]]    # 图像 1, 填充
+        """
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
 
         # Pboxes
+        # 将模型预测头（Head）输出的原始、抽象的边界框回归值，解码成边界框坐标 (x1, y1, x2, y2)。
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
+        #  (如果模型支持关键点检测) 解码模型输出的原始关键点预测值。输出：batch_size, h*w, point_num, (x, y, visible) 的张量
         pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
 
+        # target_bboxes：形状为 (b, h*w, 4)，分配为正样本的预测位置，这里填充了它所匹配的那个真实框 gt_bboxes
+        # target_scores: 形状为 (b, h*w, num_classes)，分配为正样本的位置，这里填充了它所匹配的真实物体的类别
+        # fg_mask: Foreground Mask，形状为 (b, h*w)，只有为true的正样本才计算回归损失和分类损失
+        # target_gt_idx: 对于每个正样本，记录了它匹配的是第几个真实物体
         _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
-            pred_scores.detach().sigmoid(),
-            (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
-            anchor_points * stride_tensor,
-            gt_labels,
+            pred_scores.detach().sigmoid(), # .detach():不参与反向传播
+            (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),# * stride_tensor: 放大回原图尺度
+            anchor_points * stride_tensor, # 锚点也缩放到原图尺度
+            gt_labels, # 真实标签
             gt_bboxes,
             mask_gt,
         )
 
+        # 计算用于归一化损失的分母。
         target_scores_sum = max(target_scores.sum(), 1)
 
+        # 计算用于归一化损失的分母。
         # Cls loss
         # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
         loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
 
         # Bbox loss
+        # 有正样本才有必要继续
         if fg_mask.sum():
             target_bboxes /= stride_tensor
+            # loss[0]：交并比（IoU）的损失 loss[4]：Distribution Focal Loss即DFL计算的损失（模型对边界位置的概率分布预测）
             loss[0], loss[4] = self.bbox_loss(
                 pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask
             )
+            # 反归一化。转换成绝对像素坐标
             keypoints = batch["keypoints"].to(self.device).float().clone()
+            # imgsz[1]:实际宽。imgsz[0]:实际高
             keypoints[..., 0] *= imgsz[1]
             keypoints[..., 1] *= imgsz[0]
 
+            # 预测关键点和真实关键点之间的差异
             loss[1], loss[2] = self.calculate_keypoints_loss(
                 fg_mask, target_gt_idx, keypoints, batch_idx, stride_tensor, target_bboxes, pred_kpts
             )
@@ -605,6 +684,7 @@ class v8PoseLoss(v8DetectionLoss):
         max_kpts = torch.unique(batch_idx, return_counts=True)[1].max()
 
         # Create a tensor to hold batched keypoints
+        # (bs, max_kpts, obj_keypoint_num, obj_keypoint_dim)
         batched_keypoints = torch.zeros(
             (batch_size, max_kpts, keypoints.shape[1], keypoints.shape[2]), device=keypoints.device
         )
@@ -612,33 +692,238 @@ class v8PoseLoss(v8DetectionLoss):
         # TODO: any idea how to vectorize this?
         # Fill batched_keypoints with keypoints based on batch_idx
         for i in range(batch_size):
+            # 选出所有属于当前图片 i 的物体
             keypoints_i = keypoints[batch_idx == i]
+            # 筛选出的keypoints_i填充到容器的第i行, 只填充前keypoints_i.shape[0]个位置, 剩下的位置保持用0填充
             batched_keypoints[i, : keypoints_i.shape[0]] = keypoints_i
 
         # Expand dimensions of target_gt_idx to match the shape of batched_keypoints
+        # target_gt_idx:(BS, N_anchors), 每个预测框匹配的是其所在图片中的第几个真实物体
+        # 变为 (BS, N_anchors, 1, 1)
         target_gt_idx_expanded = target_gt_idx.unsqueeze(-1).unsqueeze(-1)
 
         # Use target_gt_idx_expanded to select keypoints from batched_keypoints
+        # 通过target_gt_idx这张“分配表”，我们确保了每个“好学生”（正样本）都找到了正确的“老师”（对应的真实目标数据）
         selected_keypoints = batched_keypoints.gather(
             1, target_gt_idx_expanded.expand(-1, -1, keypoints.shape[1], keypoints.shape[2])
         )
 
         # Divide coordinates by stride
+        # 将真实关键点的 x, y 坐标缩放回特征图尺度
         selected_keypoints[..., :2] /= stride_tensor.view(1, -1, 1, 1)
 
         kpts_loss = 0
         kpts_obj_loss = 0
 
         if masks.any():
+            # 使用 masks,筛选出所有正样本对应的真实关键点
+            gt_kpt = selected_keypoints[masks]
+            # 计算每个正样本对应目标框的面积
+            area = xyxy2xywh(target_bboxes[masks])[:, 2:].prod(1, keepdim=True)
+            # 筛选出所有正样本对应的模型预测关键点
+            pred_kpt = pred_kpts[masks]
+            # 创建关键点级别的掩码，有效的关键点（可见性不为0），只计算这些有效关键点的误差
+            kpt_mask = gt_kpt[..., 2] != 0 if gt_kpt.shape[-1] == 3 else torch.full_like(gt_kpt[..., 0], True)
+            # 计算坐标回归损失
+            kpts_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area)  # pose loss
+            # 如果模型预测了每个关键点的可见性，就用 BCE 损失来计算可见性分类损失
+            if pred_kpt.shape[-1] == 3:
+                kpts_obj_loss = self.bce_pose(pred_kpt[..., 2], kpt_mask.float())  # keypoint obj loss，kpt_mask 会把不可见点标记为False
+
+        return kpts_loss, kpts_obj_loss
+
+
+# To avoid circular imports, you might need to adjust this path
+# or ensure the base classes are accessible.
+# For this example, we assume it's structured correctly.
+class v8SegmentPoseLoss(v8DetectionLoss):
+    """
+    Criterion class for computing training losses for YOLOv8 segment-pose models.
+    This class combines the loss calculations from v8SegmentationLoss and v8PoseLoss.
+    """
+
+    def __init__(self, model):  # model must be de-paralleled
+        """
+        Initialize the v8SegmentPoseLoss class.
+        This combines initializations from both segmentation and pose loss classes.
+        """
+        super().__init__(model)
+
+        # --- From v8SegmentationLoss ---
+        self.overlap = model.args.overlap_mask
+
+        # --- From v8PoseLoss ---
+        self.kpt_shape = model.model[-1].kpt_shape
+        self.bce_pose = nn.BCEWithLogitsLoss()
+
+        # Determine OKS sigmas, default to uniform if not a standard COCO-like pose task
+        # fixme hank [5, 3]
+        is_pose = self.kpt_shape == [17, 3]
+        nkpt = self.kpt_shape[0]  # number of keypoints
+
+        sigmas = torch.from_numpy(OKS_SIGMA).to(self.device) if is_pose else torch.ones(nkpt, device=self.device) / nkpt
+        self.keypoint_loss = KeypointLoss(sigmas=sigmas)
+
+    def __call__(self, preds, batch):
+        """
+        Calculate and return the combined loss for detection, segmentation, and pose estimation.
+
+        The loss tensor is structured as: [box, seg, kpt_loc, kpt_vis, cls, dfl]
+        """
+        # 1. Initialize loss tensor. We need 6 components now.
+        loss = torch.zeros(6, device=self.device)  # box, seg, kpt_loc, kpt_vis, cls, dfl
+
+        # fixme hank 2. 从SegmentPose head中解包。返回(det_preds, proto, mask_coefs, kpt_preds) during training
+        feats, pred_masks, proto, pred_kpts = preds if len(preds) == 4 else preds[1]
+        mask_h, mask_w = proto.shape[2:]
+
+        # 3. Unpack and permute detection predictions (box, class)
+        pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
+            (self.reg_max * 4, self.nc), 1
+        )
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous()
+
+        # 4. Permute segmentation and pose predictions
+        pred_masks = pred_masks.permute(0, 2, 1).contiguous()
+        pred_kpts = pred_kpts.permute(0, 2, 1).contiguous()
+
+        # 5. Common setup: anchors, strides, and target preprocessing
+        dtype = pred_scores.dtype
+        imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]
+
+        batch_size = proto.shape[0]
+        anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
+
+        try:
+            batch_idx = batch["batch_idx"].view(-1, 1)
+            targets = torch.cat((batch_idx, batch["cls"].view(-1, 1), batch["bboxes"]), 1)
+            targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
+            gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
+            mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
+        except RuntimeError as e:
+            raise TypeError("ERROR ❌ Your dataset seems incorrectly formatted for segment/pose tasks.") from e
+
+        # 6. Decode predicted boxes and keypoints
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
+        pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))
+
+        # 7. Assign targets to predictions (same for all tasks)
+        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
+            pred_scores.detach().sigmoid(),
+            (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor,
+            gt_labels,
+            gt_bboxes,
+            mask_gt,
+        )
+        target_scores_sum = max(target_scores.sum(), 1)
+
+        # 8. Calculate Classification Loss (common to all)
+        loss[4] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum
+
+        # 9. Calculate losses for positive samples (fg_mask > 0)
+        if fg_mask.sum():
+            # -- Bbox and DFL Loss (from DetectionLoss) --
+            loss[0], loss[5] = self.bbox_loss(
+                pred_distri, pred_bboxes, anchor_points, target_bboxes / stride_tensor,
+                target_scores, target_scores_sum, fg_mask
+            )
+
+            # -- Segmentation Loss (from SegmentationLoss) --
+            masks = batch["masks"].to(self.device).float()
+            if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
+                masks = F.interpolate(masks[None], (mask_h, mask_w), mode="nearest")[0]
+            loss[1] = self.calculate_segmentation_loss(
+                fg_mask, masks, target_gt_idx, target_bboxes, batch_idx, proto, pred_masks, imgsz, self.overlap
+            )
+
+            # -- Keypoint Loss (from PoseLoss) --
+            keypoints = batch["keypoints"].to(self.device).float().clone()
+            keypoints[..., 0] *= imgsz[1]  # Scale x to image width
+            keypoints[..., 1] *= imgsz[0]  # Scale y to image height
+            loss[2], loss[3] = self.calculate_keypoints_loss(
+                fg_mask, target_gt_idx, keypoints, batch_idx, stride_tensor, target_bboxes, pred_kpts
+            )
+
+        # 10. Handle cases with no positive samples to prevent DDP errors
+        else:
+            loss[1] += (proto * 0).sum() + (pred_masks * 0).sum()  # seg
+            loss[2] += (pred_kpts * 0).sum()  # kpt
+            loss[3] += (pred_kpts * 0).sum()  # kpt obj
+
+        # 11. Apply loss gains from hyperparameters
+        loss[0] *= self.hyp.box  # box gain
+        loss[1] *= self.hyp.box  # seg gain (YOLOv8 uses box gain for seg)
+        loss[2] *= self.hyp.pose  # kpt location gain
+        loss[3] *= self.hyp.kobj  # kpt visibility gain
+        loss[4] *= self.hyp.cls  # cls gain
+        loss[5] *= self.hyp.dfl  # dfl gain
+
+        return loss.sum() * batch_size, loss.detach()
+
+    # --- Helper methods copied directly from v8SegmentationLoss and v8PoseLoss ---
+
+    # From v8SegmentationLoss
+    @staticmethod
+    def single_mask_loss(gt_mask, pred, proto, xyxy, area):
+        pred_mask = torch.einsum("in,nhw->ihw", pred, proto)
+        loss = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
+        return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).sum()
+
+    def calculate_segmentation_loss(self, fg_mask, masks, target_gt_idx, target_bboxes, batch_idx, proto, pred_masks,
+                                    imgsz, overlap):
+        _, _, mask_h, mask_w = proto.shape
+        loss = 0
+        target_bboxes_normalized = target_bboxes / imgsz[[1, 0, 1, 0]]
+        marea = xyxy2xywh(target_bboxes_normalized)[..., 2:].prod(2)
+        mxyxy = target_bboxes_normalized * torch.tensor([mask_w, mask_h, mask_w, mask_h], device=proto.device)
+        for i, single_i in enumerate(zip(fg_mask, target_gt_idx, pred_masks, proto, mxyxy, marea, masks)):
+            fg_mask_i, target_gt_idx_i, pred_masks_i, proto_i, mxyxy_i, marea_i, masks_i = single_i
+            if fg_mask_i.any():
+                mask_idx = target_gt_idx_i[fg_mask_i]
+                if overlap:
+                    gt_mask = masks_i == (mask_idx + 1).view(-1, 1, 1)
+                    gt_mask = gt_mask.float()
+                else:
+                    gt_mask = masks[batch_idx.view(-1) == i][mask_idx]
+                loss += self.single_mask_loss(gt_mask, pred_masks_i[fg_mask_i], proto_i, mxyxy_i[fg_mask_i],
+                                              marea_i[fg_mask_i])
+        return loss / fg_mask.sum()
+
+    # From v8PoseLoss
+    @staticmethod
+    def kpts_decode(anchor_points, pred_kpts):
+        y = pred_kpts.clone()
+        y[..., :2] *= 2.0
+        y[..., 0] += anchor_points[:, [0]] - 0.5
+        y[..., 1] += anchor_points[:, [1]] - 0.5
+        return y
+
+    def calculate_keypoints_loss(self, masks, target_gt_idx, keypoints, batch_idx, stride_tensor, target_bboxes,
+                                 pred_kpts):
+        batch_idx = batch_idx.flatten()
+        batch_size = len(masks)
+        max_kpts = torch.unique(batch_idx, return_counts=True)[1].max()
+        batched_keypoints = torch.zeros((batch_size, max_kpts, keypoints.shape[1], keypoints.shape[2]),
+                                        device=keypoints.device)
+        for i in range(batch_size):
+            keypoints_i = keypoints[batch_idx == i]
+            batched_keypoints[i, : keypoints_i.shape[0]] = keypoints_i
+        target_gt_idx_expanded = target_gt_idx.unsqueeze(-1).unsqueeze(-1)
+        selected_keypoints = batched_keypoints.gather(1, target_gt_idx_expanded.expand(-1, -1, keypoints.shape[1],
+                                                                                       keypoints.shape[2]))
+        selected_keypoints[..., :2] /= stride_tensor.view(1, -1, 1, 1)
+        kpts_loss = 0
+        kpts_obj_loss = 0
+        if masks.any():
             gt_kpt = selected_keypoints[masks]
             area = xyxy2xywh(target_bboxes[masks])[:, 2:].prod(1, keepdim=True)
             pred_kpt = pred_kpts[masks]
             kpt_mask = gt_kpt[..., 2] != 0 if gt_kpt.shape[-1] == 3 else torch.full_like(gt_kpt[..., 0], True)
-            kpts_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area)  # pose loss
-
+            kpts_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area)
             if pred_kpt.shape[-1] == 3:
-                kpts_obj_loss = self.bce_pose(pred_kpt[..., 2], kpt_mask.float())  # keypoint obj loss
-
+                kpts_obj_loss = self.bce_pose(pred_kpt[..., 2], kpt_mask.float())
         return kpts_loss, kpts_obj_loss
 
 

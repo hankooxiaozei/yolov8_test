@@ -93,10 +93,12 @@ class PoseValidator(DetectionValidator):
             "Class",
             "Images",
             "Instances",
+            # box
             "Box(P",
             "R",
             "mAP50",
             "mAP50-95)",
+            # pose
             "Pose(P",
             "R",
             "mAP50",
@@ -141,7 +143,26 @@ class PoseValidator(DetectionValidator):
             is skipped and continues to the next one. The keypoints are extracted from the
             'extra' field which contains additional task-specific data beyond basic detection.
         """
+        # 执行NMS，保留每个物体的最佳预测结果
+        """
+        第一步：
+        {
+            'bboxes': tensor([...]),  # 最终保留的边界框
+            'conf': tensor([...]),    # 对应的置信度
+            'cls': tensor([...]),     # 对应的类别
+            'extra': tensor([...])   # 一个“附加包裹”，里面是所有关键点的数据
+        }
+        """
         preds = super().postprocess(preds)
+        """
+        第二步：
+        {
+            'bboxes': tensor([...]),
+            'conf': tensor([...]),
+            'cls': tensor([...]),
+            'keypoints': tensor_with_shape_[N, 17, 3] # 'extra' 不见了，取而代之的是结构化的 'keypoints'
+        }
+        """
         for pred in preds:
             pred["keypoints"] = pred.pop("extra").view(-1, *self.kpt_shape)  # remove extra if exists
         return preds
@@ -161,10 +182,18 @@ class PoseValidator(DetectionValidator):
             This method extends the parent class's _prepare_batch method by adding keypoint processing.
             Keypoints are scaled from normalized coordinates to original image dimensions.
         """
+        # pbatch:prepared batch，准备好的批次，包含了第 si 张图片的所有目标检测相关的真值信息。
         pbatch = super()._prepare_batch(si, batch)
+        # batch["keypoints"]: 从整个批次的真值数据中，拿出所有关键点的数据。
+        # [batch["batch_idx"]: 它记录了每一条真值数据（比如每一个框、每一个关键点集）分别属于批次中的哪一张图片。
+        # [batch["batch_idx"] == si]: 只有当 batch_idx 等于我们当前要处理的图片索引 si 时，对应位置才是 True
+        # 从所有关键点数据中，精确地筛选出只属于第 si 张图片的关键点。
         kpts = batch["keypoints"][batch["batch_idx"] == si]
         h, w = pbatch["imgsz"]
         kpts = kpts.clone()
+        # 选中所有点的x坐标，并乘以图像的高度w。
+        # 选中所有点的y坐标，并乘以图像的高度h。
+        # 添加到pbatch字典中
         kpts[..., 0] *= w
         kpts[..., 1] *= h
         pbatch["keypoints"] = kpts
@@ -189,14 +218,33 @@ class PoseValidator(DetectionValidator):
             https://github.com/jin-s13/xtcocoapi/blob/master/xtcocotools/cocoeval.py#L384.
         """
         tp = super()._process_batch(preds, batch)
+        # gt_cls = batch["cls"]: 获取这张图片上所有真值物体的类别。
         gt_cls = batch["cls"]
+        # 没有需要检测的物体或模型没有在这张图片上检测到任何物体。在这种情况下，不可能有任何匹配成功。
         if len(gt_cls) == 0 or len(preds["cls"]) == 0:
             tp_p = np.zeros((len(preds["cls"]), self.niou), dtype=bool)
         else:
             # `0.53` is from https://github.com/jin-s13/xtcocoapi/blob/master/xtcocotools/cocoeval.py#L384
+            # 转换为 (cx, cy, w, h)
+            # [:, 2:]: 从转换后的结果中，只选取 w 和 h 这两列。
+            # .prod(1): 沿着第1个维度（列维度）进行w * h乘积运算，得到每个真值框的面积。
+            # * 0.53: 为了对齐官方评测工具而引入的“经验常数”。
+            # area: 包含了这张图片上每个真值物体用于 OKS 计算的有效面积
             area = ops.xyxy2xywh(batch["bboxes"])[:, 2:].prod(1) * 0.53
+            # 计算OKS (Object Keypoint Similarity)
+            # sigma数组：不同关节点的容忍度是不同的。
+            # area：每个真值物体的有效面积，用于归一化。
+            # iou：返回一个相似度矩阵
             iou = kpt_iou(batch["keypoints"], preds["keypoints"], sigma=self.sigma, area=area)
+            # 只有类别相同的预测和真值才可能匹配
+            # 对于每个真值，它会找到与它 OKS 分数最高的那个尚未被匹配的预测
+            # 然后，它会检查这个 OKS 分数是否超过了10个不同的阈值
+            # 返回一个布尔矩阵，形状为 [预测数量, 10]。如果矩阵中 [i, j] 位置为 True，意味着第 i 个预测姿态成功地与一个真值匹配，并且它们的 OKS 分数超过了第 j 个阈值。
+            # 即生成记录了每个预测是否配对成功，并且其配对分数是否通过了10个不同严格等级的布尔成绩单
             tp_p = self.match_predictions(preds["cls"], gt_cls, iou).cpu().numpy()
+        # 将刚刚计算出的姿态评估结果 tp_p，添加到父类返回的tp字典中
+        # 'tp': 基于 Bounding Box IoU 的评判结果。
+        # 'tp_p': 基于 Keypoint OKS 的评判结果。
         tp.update({"tp_p": tp_p})  # update tp with kpts IoU
         return tp
 
@@ -216,16 +264,29 @@ class PoseValidator(DetectionValidator):
         """
         from ultralytics.engine.results import Results
 
+        """
+        包含了模型对一张图片的所有归一化的预测结果
+        'bboxes': 边界框 [x_center, y_center, width, height]。
+        'conf': 置信度。
+        'cls': 类别 ID。
+        'keypoints': 关键点 [x, y, visibility]。
+        这里的“归一化”意味着所有坐标（框和关键点）的值都在 0 到 1 之间。
+        """
+        # 创建一个和原图一样大的纯黑图片 (height, width)。
+        # 传入类别名称的映射
         Results(
             np.zeros((shape[0], shape[1]), dtype=np.uint8),
             path=None,
             names=self.names,
+            # .cat(): 转为[N, 6],[x, y, w, h, conf, cls]
             boxes=torch.cat([predn["bboxes"], predn["conf"].unsqueeze(-1), predn["cls"].unsqueeze(-1)], dim=1),
+            # [N, 17, 3]
             keypoints=predn["keypoints"],
-        ).save_txt(file, save_conf=save_conf)
+        ).save_txt(file, save_conf=save_conf) # class_id x_center y_center width height [confidence] kpt1_x kpt1_y kpt1_vis kpt2_x kpt2_y kpt2_vis
 
     def pred_to_json(self, predn: Dict[str, torch.Tensor], pbatch: Dict[str, Any]) -> None:
         """
+        将模型的预测数据，转换成COCO评估工具能够理解和处理的标准 JSON 格式
         Convert YOLO predictions to COCO JSON format.
 
         This method takes prediction tensors and a filename, converts the bounding boxes from YOLO format
@@ -241,14 +302,28 @@ class PoseValidator(DetectionValidator):
             converts bounding boxes from xyxy to xywh format, and adjusts coordinates from center to top-left corner
             before saving to the JSON dictionary.
         """
+        """
+        [{
+            "image_id": 123,
+            "category_id": 0,  // 假设 0 代表 'person'
+            "bbox": [x, y, width, height], // 像素坐标
+            "score": 0.95
+        }]
+        """
         super().pred_to_json(predn, pbatch)
         kpts = predn["kpts"]
+        # flatten(1, 2)：保持第0维不变，将第1维和第2维压平。[N, 17, 3] -> [N, 51]
         for i, k in enumerate(kpts.flatten(1, 2).tolist()):
+            # 在定位到的字典中，添加一个新的keypoints键值对
             self.jdict[-len(kpts) + i]["keypoints"] = k  # keypoints
 
     def scale_preds(self, predn: Dict[str, torch.Tensor], pbatch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
-        """Scales predictions to the original image size."""
+        """
+        将预测还原到原图比例
+        Scales predictions to the original image size.
+        """
         return {
+            # {'bboxes': <一个张量，包含了被正确缩放后的边界框>}
             **super().scale_preds(predn, pbatch),
             "kpts": ops.scale_coords(
                 pbatch["imgsz"],
@@ -259,7 +334,10 @@ class PoseValidator(DetectionValidator):
         }
 
     def eval_json(self, stats: Dict[str, Any]) -> Dict[str, Any]:
-        """Evaluate object detection model using COCO JSON format."""
+        """
+        评估出bbox和keypoints的精度指标
+        Evaluate object detection model using COCO JSON format.
+        """
         anno_json = self.data["path"] / "annotations/person_keypoints_val2017.json"  # annotations
         pred_json = self.save_dir / "predictions.json"  # predictions
         return super().coco_evaluate(stats, pred_json, anno_json, ["bbox", "keypoints"], suffix=["Box", "Pose"])

@@ -13,6 +13,7 @@ from ultralytics.nn.tasks import (
     DetectionModel,
     OBBModel,
     PoseModel,
+    SegmentPoseModel,
     SegmentationModel,
     WorldModel,
     YOLOEModel,
@@ -113,6 +114,14 @@ class YOLO(Model):
                 "trainer": yolo.pose.PoseTrainer,
                 "validator": yolo.pose.PoseValidator,
                 "predictor": yolo.pose.PosePredictor,
+            },
+            "segment-pose": {
+                "model": SegmentPoseModel,
+                "trainer": yolo.segment_pose.SegmentPoseTrainer,
+                "validator": yolo.segment_pose.SegmentPoseValidator,
+                # todo 替换PosePredictor hank
+                # predictor": yolo.pose.PosePredictor,
+                "predictor": yolo.segment_pose.SegmentPosePredictor,
             },
             "obb": {
                 "model": OBBModel,

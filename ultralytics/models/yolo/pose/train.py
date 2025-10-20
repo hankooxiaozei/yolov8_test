@@ -99,10 +99,15 @@ class PoseTrainer(yolo.detect.DetectionTrainer):
     def set_model_attributes(self):
         """Set keypoints shape attribute of PoseModel."""
         super().set_model_attributes()
+        # 从数据配置中读到的 kpt_shape 再次同步到模型实例上
         self.model.kpt_shape = self.data["kpt_shape"]
 
     def get_validator(self):
-        """Return an instance of the PoseValidator class for validation."""
+        """
+        Return an instance of the PoseValidator class for validation.
+        pose_loss: 衡量预测的关键点与真实关键点的接近程度。
+        kobj_loss: 衡量模型是否正确判断一个物体中存在可见的关键点 (Keypoint Objectness Loss)
+        """
         self.loss_names = "box_loss", "pose_loss", "kobj_loss", "cls_loss", "dfl_loss"
         return yolo.pose.PoseValidator(
             self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks

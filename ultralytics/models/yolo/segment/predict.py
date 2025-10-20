@@ -63,11 +63,16 @@ class SegmentationPredictor(DetectionPredictor):
             >>> results = predictor.postprocess(preds, img, orig_img)
         """
         # Extract protos - tuple if PyTorch model or array if exported
+        """
+        # preds[1]: 原型掩码 (prototype masks)。这是一组（比如32个）基础的、全图尺寸的“形状模板”。
+        这行代码从模型输出中提取出原型掩码，protos会回调到construct_results用于分析
+        """
         protos = preds[1][-1] if isinstance(preds[1], tuple) else preds[1]
         return super().postprocess(preds[0], img, orig_imgs, protos=protos)
 
     def construct_results(self, preds, img, orig_imgs, protos):
         """
+        构建结果
         Construct a list of result objects from the predictions.
 
         Args:
@@ -87,6 +92,7 @@ class SegmentationPredictor(DetectionPredictor):
 
     def construct_result(self, pred, img, orig_img, img_path, proto):
         """
+        构建单个结果
         Construct a single result object from the prediction.
 
         Args:
@@ -102,12 +108,17 @@ class SegmentationPredictor(DetectionPredictor):
         if not len(pred):  # save empty boxes
             masks = None
         elif self.args.retina_masks:
+            # 边界框缩放（处理后图像尺寸→原始尺寸）
             pred[:, :4] = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape)
+            # 生成高清原生掩码（直接在原图尺寸生成）
             masks = ops.process_mask_native(proto, pred[:, 6:], pred[:, :4], orig_img.shape[:2])  # HWC
         else:
+            # 在模型输出尺寸生成mask
             masks = ops.process_mask(proto, pred[:, 6:], pred[:, :4], img.shape[2:], upsample=True)  # HWC
+            # 边界框缩放（处理后图像尺寸→原始尺寸）
             pred[:, :4] = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape)
         if masks is not None:
+            # 计算每个mask的像素密度，对每个mask在高度和宽度维度求和
             keep = masks.sum((-2, -1)) > 0  # only keep predictions with masks
-            pred, masks = pred[keep], masks[keep]
+            pred, masks = pred[keep], masks[keep] # 过滤掉无效的伪阳性检测
         return Results(orig_img, path=img_path, names=self.model.names, boxes=pred[:, :6], masks=masks)

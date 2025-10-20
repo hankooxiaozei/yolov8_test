@@ -73,8 +73,12 @@ class PosePredictor(DetectionPredictor):
         """
         result = super().construct_result(pred, img, orig_img, img_path)
         # Extract keypoints from prediction and reshape according to model's keypoint shape
+        # pred[:, 6:]：只提取关键点原始数据
+        # .view(): 转为[N, 17, 3]
         pred_kpts = pred[:, 6:].view(len(pred), *self.model.kpt_shape)
         # Scale keypoints coordinates to match the original image dimensions
+        # 将这些坐标反算回原始图像 orig_img 的坐标系中
         pred_kpts = ops.scale_coords(img.shape[2:], pred_kpts, orig_img.shape)
+        # 新增keypoints属性，返回增强后的result对象
         result.update(keypoints=pred_kpts)
         return result

@@ -77,6 +77,7 @@ from ultralytics.utils.loss import (
     v8DetectionLoss,
     v8OBBLoss,
     v8PoseLoss,
+    v8SegmentPoseLoss,
     v8SegmentationLoss,
 )
 from ultralytics.utils.ops import make_divisible
@@ -608,6 +609,40 @@ class PoseModel(DetectionModel):
     def init_criterion(self):
         """Initialize the loss criterion for the PoseModel."""
         return v8PoseLoss(self)
+
+
+class SegmentPoseModel(DetectionModel):
+    """
+    YOLO Segment-Pose model.
+    This class extends DetectionModel to handle combined instance segmentation and pose estimation tasks.
+    It provides specialized loss computation for boxes, classes, pixel-level masks, and keypoints.
+    """
+    def __init__(self, cfg="yolov8n-seg-pose.yaml", ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
+        """
+        Initialize a YOLO Segment-Pose model.
+        Args:
+            cfg (str | dict): Model configuration file path or dictionary.
+            ch (int): Number of input channels.
+            nc (int, optional): Number of classes.
+            data_kpt_shape (tuple): Shape of keypoints data from the dataset (num_keypoints, num_dimensions).
+                                  This will override the kpt_shape in the model YAML if provided.
+            verbose (bool): Whether to display model information on creation.
+        """
+        # 1. Handle kpt_shape override, same logic as PoseModel
+        if not isinstance(cfg, dict):
+            cfg = yaml_model_load(cfg)  # load model YAML
+        if any(data_kpt_shape) and list(data_kpt_shape) != list(cfg["kpt_shape"]):
+            LOGGER.info(f"Overriding model.yaml kpt_shape={cfg['kpt_shape']} with data_kpt_shape={data_kpt_shape}")
+            cfg["kpt_shape"] = data_kpt_shape
+        # 2. Call the parent constructor with the (potentially modified) config
+        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+
+    def init_criterion(self):
+        """
+        Initialize the loss criterion for the SegmentPoseModel.
+        This is the core of the fusion, where we assign our custom, combined loss function.
+        """
+        return v8SegmentPoseLoss(self)
 
 
 class ClassificationModel(BaseModel):

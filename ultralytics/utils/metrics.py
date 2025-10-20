@@ -1389,10 +1389,11 @@ class PoseMetrics(DetMetrics):
             (Dict[str, np.ndarray]): Dictionary containing concatenated statistics arrays.
         """
         stats = DetMetrics.process(self, save_dir, plot, on_plot=on_plot)  # process box stats
+        # 所有关于关键点的评估指标
         results_pose = ap_per_class(
-            stats["tp_p"],
-            stats["conf"],
-            stats["pred_cls"],
+            stats["tp_p"], # tp_pose
+            stats["conf"], # 置信度分数
+            stats["pred_cls"], # 预测类别
             stats["target_cls"],
             plot=plot,
             on_plot=on_plot,
@@ -1400,6 +1401,7 @@ class PoseMetrics(DetMetrics):
             names=self.names,
             prefix="Pose",
         )[2:]
+        # 保存评估结果
         self.pose.nc = len(self.names)
         self.pose.update(results_pose)
         return stats
@@ -1477,6 +1479,149 @@ class PoseMetrics(DetMetrics):
         for i, s in enumerate(summary):
             s.update({**{k: round(v[i], decimals) for k, v in per_class.items()}})
         return summary
+
+class SegmentPoseMetrics(SegmentMetrics):
+    """
+    A class for calculating and storing metrics for detection, segmentation, and pose estimation tasks.
+
+    This class extends `SegmentMetrics` to add support for pose estimation evaluation. It manages separate
+    `Metric` objects for box, segmentation, and pose predictions, and combines their results for a comprehensive
+    evaluation of multi-task models.
+    """
+
+    def __init__(self, names: Dict[int, str] = {}) -> None:
+        """
+        Initializes the SegmentPoseMetrics class.
+
+        This sets up metric containers for detection, segmentation (from the parent class), and pose estimation.
+
+        Args:
+            names (Dict[int, str], optional): A dictionary mapping class indices to class names.
+        """
+        # 1. Initialize the parent class (SegmentMetrics), which in turn initializes DetMetrics.
+        # This gives us self.box, self.seg, and self.stats['tp_m'] automatically.
+        super().__init__(names)
+
+        # 2. Add the components from PoseMetrics.
+        self.pose = Metric()
+        self.task = "segment-pose"
+        self.stats["tp_p"] = []  # Add stats for pose true positives
+
+    def process(self, save_dir: Path = Path("."), plot: bool = False, on_plot=None) -> Dict[str, np.ndarray]:
+        """
+        Processes the accumulated statistics to compute final metrics for all three tasks.
+
+        This method first calls the parent `process` to handle box and mask metrics, then it
+        independently processes the pose metrics.
+
+        Args:
+            save_dir (Path): Directory to save plots.
+            plot (bool): Whether to plot PR curves.
+            on_plot (callable, optional): A callback function to execute after plotting.
+
+        Returns:
+            (Dict[str, np.ndarray]): A dictionary of concatenated statistics.
+        """
+        # 3. Call the parent (SegmentMetrics) process method. This will handle both
+        # box (via DetMetrics.process) and mask metrics.
+        stats = super().process(save_dir, plot, on_plot)
+
+        # 4. Now, add the pose processing logic, copied directly from PoseMetrics.
+        # This calculates pose metrics using the 'tp_p' stats.
+        results_pose = ap_per_class(
+            stats["tp_p"],
+            stats["conf"],
+            stats["pred_cls"],
+            stats["target_cls"],
+            plot=plot,
+            on_plot=on_plot,
+            save_dir=save_dir,
+            names=self.names,
+            prefix="Pose",
+        )[2:]
+        self.pose.nc = len(self.names)
+        self.pose.update(results_pose)
+
+        return stats
+
+    @property
+    def keys(self) -> List[str]:
+        # 提供一个标准的键名列表
+        """Returns a list of metric keys for box, mask, and pose."""
+        # 5. Append pose keys to the keys from the parent (which already includes box and mask).
+        return super().keys + [
+            "metrics/precision(P)",
+            "metrics/recall(P)",
+            "metrics/mAP50(P)",
+            "metrics/mAP50-95(P)",
+        ]
+
+    def mean_results(self) -> List[float]:
+        # 返回一个包含所有任务平均指标的浮点数列表
+        """Returns the mean of all metrics for box, mask, and pose."""
+        # Concatenate results: [box_metrics, mask_metrics, pose_metrics]
+        return super().mean_results() + self.pose.mean_results()
+
+    def class_result(self, i: int) -> List[float]:
+        # 获取特定类别i的所有指标
+        """Returns all metrics for a specific class index `i`."""
+        return super().class_result(i) + list(self.pose.class_result(i))
+
+    @property
+    def maps(self) -> np.ndarray:
+        # 其中每个元素是对应类别的 mAP fixme 这里可能有问题 np.concatenate()
+        """
+        Returns the mAP per class for all three tasks.
+        The result is a concatenated array: [box_maps, mask_maps, pose_maps].
+        """
+        return np.concatenate((super().maps, self.pose.maps))
+
+    @property
+    def fitness(self) -> float:
+        # 计算一个单一的“健康度”分数
+        """
+        Computes a single fitness score, combining the fitness from box, mask, and pose.
+        The parent `fitness` already combines box and mask.
+        """
+        return super().fitness + self.pose.fitness()
+
+    # The `curves` and `curves_results` properties follow the same additive pattern.
+    @property
+    def curves(self) -> List[str]:
+        # 返回所有可绘制曲线的名称列表
+        """Returns a list of all available curve names."""
+        return super().curves + [
+            "Precision-Recall(P)",
+            "F1-Confidence(P)",
+            "Precision-Confidence(P)",
+            "Recall-Confidence(P)",
+        ]
+
+    @property
+    def curves_results(self) -> List[List]:
+        # 返回所有曲线的实际数据
+        """Returns the data for all curves."""
+        return super().curves_results + self.pose.curves_results
+
+    def summary(self, normalize: bool = True, decimals: int = 5) -> List[Dict[str, Any]]:
+        """
+        Generates a summary dictionary for each class, including box, mask, and pose metrics.
+        """
+        # 6. Get the summary from the parent, which includes box and mask metrics.
+        summary_data = super().summary(normalize, decimals)
+
+        # 7. Define the new per-class metrics for pose.
+        per_class_pose = {
+            "Pose-P": self.pose.p,
+            "Pose-R": self.pose.r,
+            "Pose-F1": self.pose.f1,
+        }
+
+        # 8. Update each class's dictionary with the pose metrics.
+        for i, s in enumerate(summary_data):
+            s.update({k: round(v[i], decimals) for k, v in per_class_pose.items()})
+
+        return summary_data
 
 
 class ClassifyMetrics(SimpleClass, DataExportMixin):

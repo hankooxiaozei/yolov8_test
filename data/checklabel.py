@@ -17,8 +17,9 @@ def check_labels(txt_labels, images_dir):
         # pic_path = images_dir + filename + ".jpg"
         pic_path = os.path.join(images_dir, filename + ".jpg")  # 使用 os.path.join 构建完整图像路径
         img = cv2.imread(pic_path)
-        img = denoise_with_bilateral_filter(img)
-        img = enhance_contrast_clahe(img, 2.5, (8, 8))
+        # img = denoise_with_bilateral_filter(img)
+        # img = enhance_contrast_clahe(img, 2.5, (8, 8))
+
         # img = enhance_with_histogram_equalization(img)
         # img = sharpen_image(img)
 

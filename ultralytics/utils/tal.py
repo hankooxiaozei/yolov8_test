@@ -370,12 +370,30 @@ def make_anchors(feats, strides, grid_cell_offset=0.5):
     assert feats is not None
     dtype, device = feats[0].dtype, feats[0].device
     for i, stride in enumerate(strides):
+        # 获取特征图尺寸
         h, w = feats[i].shape[2:] if isinstance(feats, list) else (int(feats[i][0]), int(feats[i][1]))
+        # 创建网格坐标轴
         sx = torch.arange(end=w, device=device, dtype=dtype) + grid_cell_offset  # shift x
         sy = torch.arange(end=h, device=device, dtype=dtype) + grid_cell_offset  # shift y
+        """
+        sy = [[0.5, 0.5, 0.5],
+              [1.5, 1.5, 1.5],
+              [2.5, 2.5, 2.5]]
+        sx = [[0.5, 1.5, 2.5],
+              [0.5, 1.5, 2.5],
+              [0.5, 1.5, 2.5]]
+        """
+        # 创建二维网格
         sy, sx = torch.meshgrid(sy, sx, indexing="ij") if TORCH_1_10 else torch.meshgrid(sy, sx)
+        # 组合并压平网格坐标
+        # .stack((sx, sy), -1):将sx和sy两个3x3的张量打包成一个元组，生成一个形状为 [3, 3, 2] 的张量
+        # .view()，[3, 3, 2]->[9, 2]
         anchor_points.append(torch.stack((sx, sy), -1).view(-1, 2))
+        # 创建对应的步长张量
+        # .full((h * w, 1): 创建一个形状为 [h * w, 1] 的张量，并用步长值 8 来填充它。
         stride_tensor.append(torch.full((h * w, 1), stride, dtype=dtype, device=device))
+        # torch.cat(anchor_points):[6400, 2], [1600, 2], [400, 2] -> [8400, 2]
+        # torch.cat(stride_tensor):[8400, 1] -> [8400, 1]
     return torch.cat(anchor_points), torch.cat(stride_tensor)
 
 

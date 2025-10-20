@@ -83,5 +83,5 @@ if __name__ == "__main__":
     # json_dir = "C:/Users/HL/Downloads/wendang_labels_1/images/"
     # # json_dir = "C:/Users/HL/Downloads/wendang_labels/images20250826/"
     # save_dir = "C:/Users/HL/Downloads/wendang_labels_1/label_test/"
-    # classes = "E"
+    # classes = "E,M"
     convert_label_json(json_dir, save_dir, classes)
