@@ -15,12 +15,11 @@ val: val/images # val images (relative to 'path') 128 images
 test: # test images (optional)
 
 # Classes
-nc: 2  # 类别数量
+nc: 2 # 类别数量
 #names:
 #  0: _ignore_
 #  1: E
-names: ['E','M']
-
+names: ["E", "M"]
 
 # Download script/URL (optional)
 download: https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128-seg.zip
